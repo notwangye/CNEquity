@@ -16,7 +16,7 @@ from cnequity.query import load
 
 
 def validate_lake(data_root, expected_symbols, *, require_real=True, target_date=None,
-                  loader=None):
+                  min_sessions=20, loader=None):
     result = {"status": "FAIL", "data_root": str(data_root),
               "target_date": target_date,
               "requested_symbols": expected_symbols, "bars": {}, "coverage": {},
@@ -25,6 +25,15 @@ def validate_lake(data_root, expected_symbols, *, require_real=True, target_date
               "strategy_blockers": []}
     if not expected_symbols or len(set(expected_symbols)) != len(expected_symbols):
         raise ValueError("Require distinct explicit symbols")
+    if type(min_sessions) is not int or min_sessions < 2:
+        raise ValueError("Invalid minimum trading sessions")
+    if target_date is not None:
+        try:
+            day = pd.Timestamp(target_date).normalize()
+        except (ValueError, TypeError):
+            raise ValueError("Invalid target date") from None
+        if pd.isna(day) or day.strftime("%Y-%m-%d") != target_date:
+            raise ValueError("Invalid target date")
     reader = loader or load
     bars = reader("daily_bars", data_root=data_root, symbols=expected_symbols,
                 adjust=None).to_pandas()
@@ -68,6 +77,7 @@ def validate_lake(data_root, expected_symbols, *, require_real=True, target_date
             return x.strip().lower() in {"true", "1"}
         return None
     cal_flags = calendar.is_trading.map(parse_flag)
+    trading_dates = set()
     if cal_flags.isna().any():
         result["errors"].append("UNKNOWN_CALENDAR_FLAG")
     else:
@@ -97,15 +107,29 @@ def validate_lake(data_root, expected_symbols, *, require_real=True, target_date
         result["errors"].append("NO_REAL_SOURCE")
     if bars.symbol.isna().any() or not set(bars.symbol).issubset(set(expected_symbols)):
         result["errors"].append("UNEXPECTED_SYMBOLS")
+    target_ts = pd.Timestamp(target_date) if target_date else (dates.max() if not dates.empty else None)
+    verified_sessions = sorted(d for d in trading_dates if target_ts is not None and d <= target_ts)
+    expected_tail = set(verified_sessions[-min_sessions:]) if len(verified_sessions) >= min_sessions else set()
+    if len(verified_sessions) < min_sessions:
+        result["errors"].append("INSUFFICIENT_EXCHANGE_CALENDAR")
+    if target_ts is not None and target_ts not in trading_dates:
+        result["errors"].append("TARGET_DATE_NOT_CONFIRMED_TRADING_SESSION")
     for symbol in expected_symbols:
         frame = bars.loc[bars.symbol.eq(symbol)].sort_values("trade_date")
         if frame.empty:
             result["errors"].append("MISSING_EXPECTED_SYMBOL:" + symbol)
         elif target_date is not None and str(frame.trade_date.iloc[-1])[:10] != target_date:
             result["errors"].append("MISSING_TARGET_DATE:" + symbol)
-        if len(frame) < 20:
+        actual_sessions = set(pd.to_datetime(frame.trade_date, errors="coerce").dt.normalize())
+        missing = sorted(expected_tail - actual_sessions)
+        if len(frame) < min_sessions:
             result["errors"].append("INSUFFICIENT_SAMPLE_SESSIONS:" + symbol)
+        if missing:
+            result["errors"].append("MISSING_CONSECUTIVE_SESSIONS:" + symbol)
         result["coverage"][symbol] = {
+            "most_recent_sessions_expected": len(expected_tail),
+            "missing_recent_sessions": [str(d.date()) for d in missing[:15]],
+            "missing_recent_session_count": len(missing),
             "bars": len(frame),
             "first": str(frame.trade_date.iloc[0])[:10] if not frame.empty else None,
             "last": str(frame.trade_date.iloc[-1])[:10] if not frame.empty else None,
@@ -154,11 +178,14 @@ def main():
     parser.add_argument("--data-root", required=True)
     parser.add_argument("--expected-symbols", default="600519.SH,000001.SZ")
     parser.add_argument("--output", required=True)
+    parser.add_argument("--min-sessions", type=int, default=20,
+                        help="Required contiguous recent exchange sessions per demo stock")
     parser.add_argument("--target-date", help="Require a bar on this YYYY-MM-DD date for each expected symbol")
     args = parser.parse_args()
     report = validate_lake(args.data_root,
                            [x.strip() for x in args.expected_symbols.split(",")],
-                           target_date=args.target_date)
+                           target_date=args.target_date,
+                           min_sessions=args.min_sessions)
     dest = Path(args.output)
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(json.dumps(report, indent=2, ensure_ascii=False, default=str))
