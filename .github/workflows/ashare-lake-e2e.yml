@@ -40,6 +40,7 @@ jobs:
           cne init --profile demo \
             --symbols 600519.SH,000001.SZ \
             --days 90 \
+            --trade-date 2026-11-04 \
             --data-root "$RUNNER_TEMP/ashare-e2e/lake" \
             --config-out "$RUNNER_TEMP/ashare-e2e/demo.toml"
       - name: Reopen lake and independently validate curated data
@@ -49,6 +50,7 @@ jobs:
           python integrations/ashare_quant/e2e_validate_lake.py \
             --data-root "$RUNNER_TEMP/ashare-e2e/lake" \
             --expected-symbols 600519.SH,000001.SZ \
+            --target-date 2026-11-04 \
             --output "$RUNNER_TEMP/ashare-e2e/readback.json"
           cat "$RUNNER_TEMP/ashare-e2e/readback.json"
       - name: Upload E2E diagnostic
