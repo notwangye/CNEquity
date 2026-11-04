@@ -93,6 +93,32 @@ class LakeE2EValidatorTests(unittest.TestCase):
         self.assertLess(result["bars"]["historical_status_coverage"], 1)
         self.assertFalse(result["historical_universe_approved"])
 
+    def test_missing_requested_instrument_is_blocked(self):
+        datasets, date = sample()
+        datasets["instruments"] = datasets["instruments"].loc[
+            datasets["instruments"].symbol.ne("600519.SH")
+        ]
+        result = run(datasets, date)
+        self.assertIn("MISSING_OR_WRONG_INSTRUMENT:600519.SH", result["errors"])
+        self.assertFalse(result["provider_live_bars_verified"])
+
+    def test_ambiguous_st_flag_is_not_valid_evidence(self):
+        datasets, date = sample()
+        datasets["trading_status"].loc[0, "risk_warning"] = "unknown"
+        result = run(datasets, date)
+        self.assertLess(result["bars"]["historical_status_coverage"], 1)
+        self.assertIn("HISTORICAL_STATUS_NOT_COMPLETE", result["strategy_blockers"])
+
+    def test_duplicate_status_blocks_strategy_audit(self):
+        datasets, date = sample()
+        status = datasets["trading_status"]
+        datasets["trading_status"] = pd.concat(
+            [status, status.iloc[[0]]], ignore_index=True
+        )
+        result = run(datasets, date)
+        self.assertIn("DUPLICATE_TRADING_STATUS", result["strategy_blockers"])
+        self.assertFalse(result["strategy_approved"])
+
     def test_duplicate_bars_rejected(self):
         datasets, date = sample()
         frame = datasets["daily_bars"]
