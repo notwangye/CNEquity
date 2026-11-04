@@ -182,15 +182,32 @@ def main():
                         help="Required contiguous recent exchange sessions per demo stock")
     parser.add_argument("--target-date", help="Require a bar on this YYYY-MM-DD date for each expected symbol")
     args = parser.parse_args()
-    report = validate_lake(args.data_root,
-                           [x.strip() for x in args.expected_symbols.split(",")],
-                           target_date=args.target_date,
-                           min_sessions=args.min_sessions)
+    symbols = [x.strip() for x in args.expected_symbols.split(",")]
+    try:
+        report = validate_lake(
+            args.data_root, symbols, target_date=args.target_date,
+            min_sessions=args.min_sessions,
+        )
+    except Exception as exc:
+        # A missing parquet partition or incompatible query schema must
+        # still leave a useful artifact for the developer to diagnose.
+        report = {
+            "status": "READBACK_RUNTIME_ERROR",
+            "target_date": args.target_date,
+            "requested_symbols": symbols,
+            "provider_live_bars_verified": False,
+            "historical_universe_approved": False,
+            "strategy_approved": False,
+            "errors": ["LAKE_READBACK_EXCEPTION"],
+            "exception_type": type(exc).__name__,
+            "exception": str(exc)[:500],
+        }
     dest = Path(args.output)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(json.dumps(report, indent=2, ensure_ascii=False, default=str))
-    print("CN_E2E_LAKE_READBACK", report["status"], report["bars"].get("rows", 0))
-    if report["errors"]:
+    dest.write_text(json.dumps(report, indent=2, ensure_ascii=False, default=str),
+                    encoding="utf-8")
+    print("CN_E2E_LAKE_READBACK", report["status"], report.get("bars", {}).get("rows", 0))
+    if report["status"] not in {"REAL_DEMO_BARS_READBACK_PASSED_NOT_FULL_UNIVERSE"}:
         raise SystemExit(2)
 
 
