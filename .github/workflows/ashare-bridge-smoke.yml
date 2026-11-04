@@ -1,0 +1,66 @@
+name: A-share bridge isolated smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Offline sample contract or real demo connectivity"
+        required: true
+        type: choice
+        default: sample
+        options:
+          - sample
+          - demo
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ashare-bridge-smoke
+  cancel-in-progress: false
+
+jobs:
+  bridge-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CNE_LANG: en
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test adapter contract offline
+        run: |
+          python -m compileall -q integrations/ashare_quant
+          python -m unittest discover -s integrations/ashare_quant -p 'test_*.py' -v
+      - name: Install fork package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          cne doctor --json
+      - name: Build disposable data lake
+        run: |
+          mkdir -p "$RUNNER_TEMP/cnequity-bridge"
+          if [[ "${{ inputs.mode }}" == "sample" ]]; then
+            cne init --profile sample --data-root "$RUNNER_TEMP/cnequity-bridge/lake" --config-out "$RUNNER_TEMP/cnequity-bridge/config.toml"
+          else
+            cne init --profile demo --data-root "$RUNNER_TEMP/cnequity-bridge/lake" --config-out "$RUNNER_TEMP/cnequity-bridge/config.toml"
+          fi
+        shell: bash
+      - name: Read-only dataset compatibility check
+        run: |
+          python integrations/ashare_quant/check_lake_contract.py \
+            --data-root "$RUNNER_TEMP/cnequity-bridge/lake" \
+            --output "$RUNNER_TEMP/cnequity-bridge/contract.json" \
+            ${{ inputs.mode == 'sample' && '--allow-sample' || '' }}
+          cat "$RUNNER_TEMP/cnequity-bridge/contract.json"
+        shell: bash
+      - name: Preserve contract diagnostic artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ashare-bridge-contract
+          path: ${{ runner.temp }}/cnequity-bridge/contract.json
+          if-no-files-found: warn
+          retention-days: 7
