@@ -15,7 +15,8 @@ import pandas as pd
 from cnequity.query import load
 
 
-def validate_lake(data_root, expected_symbols, *, require_real=True, target_date=None):
+def validate_lake(data_root, expected_symbols, *, require_real=True, target_date=None,
+                  loader=None):
     result = {"status": "FAIL", "data_root": str(data_root),
               "target_date": target_date,
               "requested_symbols": expected_symbols, "bars": {}, "coverage": {},
@@ -23,10 +24,11 @@ def validate_lake(data_root, expected_symbols, *, require_real=True, target_date
               "strategy_approved": False, "provider_live_bars_verified": False}
     if not expected_symbols or len(set(expected_symbols)) != len(expected_symbols):
         raise ValueError("Require distinct explicit symbols")
-    bars = load("daily_bars", data_root=data_root, symbols=expected_symbols,
+    reader = loader or load
+    bars = reader("daily_bars", data_root=data_root, symbols=expected_symbols,
                 adjust=None).to_pandas()
-    instruments = load("instruments", data_root=data_root).to_pandas()
-    calendar = load("trading_calendar", data_root=data_root).to_pandas()
+    instruments = reader("instruments", data_root=data_root).to_pandas()
+    calendar = reader("trading_calendar", data_root=data_root).to_pandas()
     if bars.empty:
         result["errors"].append("NO_PUBLISHED_DAILY_BARS")
         return result
@@ -73,8 +75,8 @@ def validate_lake(data_root, expected_symbols, *, require_real=True, target_date
         result["errors"].append("UNVERIFIED_VOLUME_UNIT")
     sources = sorted(bars.source.dropna().astype(str).unique().tolist())
     if (bars.source.isna().any() or not sources
-            or any(not x.strip() or x.lower() == "mock" for x in sources)):
-        result["errors"].append("MOCK_OR_MISSING_PROVENANCE")
+            or any(not x.strip() or x.lower() in {"mock", "baostock"} for x in sources)):
+        result["errors"].append("BANNED_OR_MISSING_SOURCE")
     if require_real and not sources:
         result["errors"].append("NO_REAL_SOURCE")
     if bars.symbol.isna().any() or not set(bars.symbol).issubset(set(expected_symbols)):
@@ -85,6 +87,8 @@ def validate_lake(data_root, expected_symbols, *, require_real=True, target_date
             result["errors"].append("MISSING_EXPECTED_SYMBOL:" + symbol)
         elif target_date is not None and str(frame.trade_date.iloc[-1])[:10] != target_date:
             result["errors"].append("MISSING_TARGET_DATE:" + symbol)
+        if len(frame) < 20:
+            result["errors"].append("INSUFFICIENT_SAMPLE_SESSIONS:" + symbol)
         result["coverage"][symbol] = {
             "bars": len(frame),
             "first": str(frame.trade_date.iloc[0])[:10] if not frame.empty else None,
@@ -99,12 +103,14 @@ def validate_lake(data_root, expected_symbols, *, require_real=True, target_date
     # Historical ST can be partial or nonexistent in demo mode. Never pretend
     # the absence of status rows means a stock is non-ST.
     try:
-        status = load("trading_status", data_root=data_root).to_pandas()
+        status = reader("trading_status", data_root=data_root).to_pandas()
         for col in ("symbol", "trade_date", "is_trading", "risk_warning"):
             if col not in status.columns:
                 raise ValueError("Missing trading_status column " + col)
         subset = status.loc[status.symbol.isin(expected_symbols)]
-        keys = set(zip(subset.symbol.astype(str), subset.trade_date.astype(str).str[:10]))
+        # A derived trading row with unknown risk_warning is NOT ST evidence.
+        known = subset.loc[subset.risk_warning.notna() & subset.is_trading.notna()]
+        keys = set(zip(known.symbol.astype(str), known.trade_date.astype(str).str[:10]))
         required_keys = set(zip(bars.symbol.astype(str), bars.trade_date.astype(str).str[:10]))
         result["bars"]["historical_status_coverage"] = len(required_keys & keys) / len(required_keys)
         result["bars"]["unverified_status_records"] = len(required_keys - keys)
