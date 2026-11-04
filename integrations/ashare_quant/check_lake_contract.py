@@ -51,9 +51,14 @@ def inspect_contract(data_root, *, allow_sample=False, loader=None):
     result["warnings"] = failures
     # Even a complete set of datasets cannot certify PIT ST evidence,
     # a full historical universe, liquidity/fillability, or model alpha.
-    result["status"] = "SAMPLE_SMOKE_COMPLETE" if allow_sample and not any(
-        "missing required columns" in d.get("error", "") for d in result["datasets"].values()
-    ) else "CONTRACT_READABLE_PENDING_PIT_AUDIT" if not failures else "CONTRACT_INCOMPLETE"
+    if allow_sample:
+        # Sample may omit optional curated datasets; its purpose is API
+        # wiring only, never a clearance to use mock prices for research.
+        bars_ok = result["datasets"].get("daily_bars", {}).get("rows", 0) > 0
+        result["status"] = "SAMPLE_SMOKE_COMPLETE" if bars_ok else "CONTRACT_INCOMPLETE"
+    else:
+        result["status"] = ("CONTRACT_READABLE_PENDING_PIT_AUDIT"
+                            if not failures else "CONTRACT_INCOMPLETE")
     if allow_sample:
         result["warnings"].append("Sample mode is synthetic and explicitly forbidden for research.")
     return result
