@@ -21,7 +21,8 @@ def validate_lake(data_root, expected_symbols, *, require_real=True, target_date
               "target_date": target_date,
               "requested_symbols": expected_symbols, "bars": {}, "coverage": {},
               "errors": [], "historical_universe_approved": False,
-              "strategy_approved": False, "provider_live_bars_verified": False}
+              "strategy_approved": False, "provider_live_bars_verified": False,
+              "strategy_blockers": []}
     if not expected_symbols or len(set(expected_symbols)) != len(expected_symbols):
         raise ValueError("Require distinct explicit symbols")
     reader = loader or load
@@ -114,9 +115,14 @@ def validate_lake(data_root, expected_symbols, *, require_real=True, target_date
         required_keys = set(zip(bars.symbol.astype(str), bars.trade_date.astype(str).str[:10]))
         result["bars"]["historical_status_coverage"] = len(required_keys & keys) / len(required_keys)
         result["bars"]["unverified_status_records"] = len(required_keys - keys)
+        if required_keys - keys:
+            result["strategy_blockers"].append("HISTORICAL_STATUS_NOT_COMPLETE")
     except (OSError, ValueError, RuntimeError, KeyError) as exc:
         result["bars"]["historical_status_coverage"] = None
         result["bars"]["status_read_warning"] = str(exc)[:180]
+        result["strategy_blockers"].append("TRADING_STATUS_DATASET_MISSING")
+    if not result["errors"]:
+        result["strategy_blockers"].append("DEMO_NOT_FULL_POINT_IN_TIME_UNIVERSE")
     result["provider_live_bars_verified"] = not result["errors"] and require_real
     result["status"] = ("REAL_DEMO_BARS_READBACK_PASSED_NOT_FULL_UNIVERSE"
                         if result["provider_live_bars_verified"]
