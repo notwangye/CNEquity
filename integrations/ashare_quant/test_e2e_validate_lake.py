@@ -119,6 +119,40 @@ class LakeE2EValidatorTests(unittest.TestCase):
         self.assertIn("DUPLICATE_TRADING_STATUS", result["strategy_blockers"])
         self.assertFalse(result["strategy_approved"])
 
+    def test_missing_middle_session_fails_even_when_target_is_present(self):
+        datasets, date = sample()
+        bars = datasets["daily_bars"]
+        omit = bars.loc[bars.symbol.eq("600519.SH"), "trade_date"].iloc[-6]
+        datasets["daily_bars"] = bars.loc[~(
+            bars.symbol.eq("600519.SH") & bars.trade_date.eq(omit)
+        )].reset_index(drop=True)
+        result = run(datasets, date)
+        self.assertIn("MISSING_CONSECUTIVE_SESSIONS:600519.SH", result["errors"])
+        self.assertEqual(result["coverage"]["600519.SH"]["missing_recent_session_count"], 1)
+
+    def test_invalid_target_date_is_rejected(self):
+        datasets, date = sample()
+        with self.assertRaisesRegex(ValueError, "Invalid target date"):
+            run(datasets, "2026-11-04hello")
+
+    def test_unconfirmed_target_session_fails(self):
+        datasets, date = sample()
+        datasets["trading_calendar"].loc[
+            datasets["trading_calendar"].trade_date.eq(date), "is_trading"
+        ] = False
+        result = run(datasets, date)
+        self.assertIn("TARGET_DATE_NOT_CONFIRMED_TRADING_SESSION", result["errors"])
+
+    def test_minimum_calendar_window_is_enforced(self):
+        datasets, date = sample()
+        def loader(name, **kwargs):
+            return Frame(datasets[name])
+        result = module.validate_lake(
+            "/isolated", ["600519.SH", "000001.SZ"], target_date=date,
+            min_sessions=30, loader=loader,
+        )
+        self.assertIn("INSUFFICIENT_EXCHANGE_CALENDAR", result["errors"])
+
     def test_duplicate_bars_rejected(self):
         datasets, date = sample()
         frame = datasets["daily_bars"]
