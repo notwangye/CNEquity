@@ -40,6 +40,13 @@ def validate_lake(data_root, expected_symbols, *, require_real=True, target_date
         return result
     if not {"symbol", "asset_type", "list_date"}.issubset(instruments.columns):
         result["errors"].append("MISSING_INSTRUMENT_COLUMNS")
+    else:
+        if instruments["symbol"].duplicated().any():
+            result["errors"].append("DUPLICATE_INSTRUMENTS")
+        for symbol in expected_symbols:
+            listing = instruments.loc[instruments["symbol"].eq(symbol)]
+            if len(listing) != 1 or str(listing.iloc[0]["asset_type"]).lower() != "stock":
+                result["errors"].append("MISSING_OR_WRONG_INSTRUMENT:" + symbol)
     if not {"trade_date", "is_trading"}.issubset(calendar.columns):
         result["errors"].append("MISSING_CALENDAR_COLUMNS")
         return result
@@ -53,7 +60,13 @@ def validate_lake(data_root, expected_symbols, *, require_real=True, target_date
     def parse_flag(x):
         if hasattr(x, "item") and not isinstance(x, str):
             x = x.item()
-        return x if isinstance(x, bool) else None
+        if isinstance(x, bool):
+            return x
+        if isinstance(x, int) and x in (0, 1):
+            return bool(x)
+        if isinstance(x, str) and x.strip().lower() in {"true", "false", "1", "0"}:
+            return x.strip().lower() in {"true", "1"}
+        return None
     cal_flags = calendar.is_trading.map(parse_flag)
     if cal_flags.isna().any():
         result["errors"].append("UNKNOWN_CALENDAR_FLAG")
@@ -110,7 +123,11 @@ def validate_lake(data_root, expected_symbols, *, require_real=True, target_date
                 raise ValueError("Missing trading_status column " + col)
         subset = status.loc[status.symbol.isin(expected_symbols)]
         # A derived trading row with unknown risk_warning is NOT ST evidence.
-        known = subset.loc[subset.risk_warning.notna() & subset.is_trading.notna()]
+        risk = subset.risk_warning.map(parse_flag)
+        trading = subset.is_trading.map(parse_flag)
+        known = subset.loc[risk.notna() & trading.notna()]
+        if subset.duplicated(["symbol", "trade_date"]).any():
+            result["strategy_blockers"].append("DUPLICATE_TRADING_STATUS")
         keys = set(zip(known.symbol.astype(str), known.trade_date.astype(str).str[:10]))
         required_keys = set(zip(bars.symbol.astype(str), bars.trade_date.astype(str).str[:10]))
         result["bars"]["historical_status_coverage"] = len(required_keys & keys) / len(required_keys)
