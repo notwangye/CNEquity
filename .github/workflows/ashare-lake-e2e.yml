@@ -56,6 +56,7 @@ jobs:
             --data-root "$RUNNER_TEMP/ashare-e2e/lake" \
             --expected-symbols 600519.SH,000001.SZ \
             --target-date 2026-11-04 \
+            --min-sessions 60 \
             --output "$RUNNER_TEMP/ashare-e2e/readback.json"
           cat "$RUNNER_TEMP/ashare-e2e/readback.json"
       - name: Emit failure summary when source ingestion fails
