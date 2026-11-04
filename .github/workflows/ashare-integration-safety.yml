@@ -1,0 +1,36 @@
+name: A-share integration safety
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'integrations/ashare_quant/**'
+      - '.github/workflows/ashare-integration-safety.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check backup script syntax
+        run: bash -n integrations/ashare_quant/snapshot_r2.sh
+      - name: Verify adapter contract tests (offline)
+        run: |
+          python -m compileall -q integrations/ashare_quant
+          python -m unittest discover -s integrations/ashare_quant -p 'test_*.py' -v
+      - name: Check backup fails closed without required configuration
+        shell: bash
+        run: |
+          if env -u CNE_LAKE_ROOT -u CNE_R2_REMOTE -u CNE_R2_BUCKET \
+            bash integrations/ashare_quant/snapshot_r2.sh restore; then
+            echo "Unsafe backup accepted missing configuration" >&2
+            exit 1
+          fi
