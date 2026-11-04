@@ -40,12 +40,14 @@ jobs:
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/ashare-e2e"
+          set -o pipefail
           cne init --profile demo \
             --symbols 600519.SH,000001.SZ \
             --days 90 \
             --trade-date 2026-11-04 \
             --data-root "$RUNNER_TEMP/ashare-e2e/lake" \
-            --config-out "$RUNNER_TEMP/ashare-e2e/demo.toml"
+            --config-out "$RUNNER_TEMP/ashare-e2e/demo.toml" \
+            2>&1 | tee "$RUNNER_TEMP/ashare-e2e/ingestion.log"
       - name: Reopen lake and independently validate curated data
         if: steps.ingest.outcome == 'success'
         shell: bash
@@ -56,11 +58,34 @@ jobs:
             --target-date 2026-11-04 \
             --output "$RUNNER_TEMP/ashare-e2e/readback.json"
           cat "$RUNNER_TEMP/ashare-e2e/readback.json"
+      - name: Emit failure summary when source ingestion fails
+        if: failure() && steps.ingest.outcome == 'failure'
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/ashare-e2e"
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ["RUNNER_TEMP"]) / "ashare-e2e"
+          report = {
+              "status": "INGESTION_FAILED_NO_READBACK",
+              "target_date": "2026-11-04",
+              "requested_symbols": ["600519.SH", "000001.SZ"],
+              "provider_live_bars_verified": False,
+              "historical_universe_approved": False,
+              "strategy_approved": False,
+              "errors": ["REAL_DEMO_INGESTION_FAILED"],
+              "note": "Inspect ingestion.log; no valid market data confirmation.",
+          }
+          (root / "readback.json").write_text(json.dumps(report, indent=2))
+          PY
       - name: Upload E2E diagnostic
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: cnequity-real-demo-e2e-report
-          path: ${{ runner.temp }}/ashare-e2e/readback.json
+          path: |
+            ${{ runner.temp }}/ashare-e2e/readback.json
+            ${{ runner.temp }}/ashare-e2e/ingestion.log
           if-no-files-found: warn
           retention-days: 7
