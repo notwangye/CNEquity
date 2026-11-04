@@ -1,0 +1,61 @@
+name: CNEquity real data lake E2E
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'integrations/ashare_quant/e2e_validate_lake.py'
+      - '.github/workflows/ashare-lake-e2e.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cnequity-real-demo-e2e
+  cancel-in-progress: false
+
+jobs:
+  real-lake-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      CNE_LANG: en
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install checked-out CNEquity fork
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m compileall -q integrations/ashare_quant/e2e_validate_lake.py
+      - name: Ingest genuine daily bars into isolated local lake
+        id: ingest
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/ashare-e2e"
+          cne init --profile demo \
+            --symbols 600519.SH,000001.SZ \
+            --days 90 \
+            --data-root "$RUNNER_TEMP/ashare-e2e/lake" \
+            --config-out "$RUNNER_TEMP/ashare-e2e/demo.toml"
+      - name: Reopen lake and independently validate curated data
+        if: steps.ingest.outcome == 'success'
+        shell: bash
+        run: |
+          python integrations/ashare_quant/e2e_validate_lake.py \
+            --data-root "$RUNNER_TEMP/ashare-e2e/lake" \
+            --expected-symbols 600519.SH,000001.SZ \
+            --output "$RUNNER_TEMP/ashare-e2e/readback.json"
+          cat "$RUNNER_TEMP/ashare-e2e/readback.json"
+      - name: Upload E2E diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cnequity-real-demo-e2e-report
+          path: ${{ runner.temp }}/ashare-e2e/readback.json
+          if-no-files-found: warn
+          retention-days: 7
