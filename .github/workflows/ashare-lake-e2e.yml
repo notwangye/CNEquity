@@ -80,6 +80,38 @@ jobs:
           }
           (root / "readback.json").write_text(json.dumps(report, indent=2))
           PY
+      - name: Summarize actual data verdict
+        if: always()
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          path = Path(os.environ["RUNNER_TEMP"]) / "ashare-e2e" / "readback.json"
+          lines = ["## CNEquity real lake E2E",
+                   "Target close: **2026-11-04**",
+                   "Scope: 600519.SH, 000001.SZ (demo only; not full market)"]
+          if not path.exists():
+              lines.append("Result: **NO REPORT** — inspect failed installation or unit-test step")
+          else:
+              report = json.loads(path.read_text())
+              lines.append("Result: **" + str(report.get("status", "UNKNOWN")) + "**")
+              lines.append("Actual real bars verified: **" +
+                           str(report.get("provider_live_bars_verified", False)) + "**")
+              coverage = report.get("coverage", {})
+              for symbol, item in sorted(coverage.items()):
+                  lines.append("- " + symbol + ": bars=" +
+                               str(item.get("bars", "?")) + ", last=" +
+                               str(item.get("last", "?")) + ", missing sessions=" +
+                               str(item.get("missing_recent_session_count", "?")))
+              blockers = report.get("strategy_blockers", [])
+              errors = report.get("errors", [])
+              lines.append("Errors: " + (", ".join(errors) if errors else "none"))
+              lines.append("Strategy blockers: " +
+                           (", ".join(blockers) if blockers else "demo scope not strategy-approved"))
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as out:
+              out.write("\\n".join(lines) + "\\n")
+          PY
       - name: Upload E2E diagnostic
         if: always()
         uses: actions/upload-artifact@v4
