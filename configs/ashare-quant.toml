@@ -1,0 +1,13 @@
+# Dedicated CNEquity configuration for the ashare-quant strategy.
+# Data storage is local to CNEquity; no R2/archive/backup integration.
+extends = "builtin"
+
+[data]
+root = "../data/ashare-quant-lake"
+
+[sources.baostock]
+enabled = false
+
+[tdx_protocol]
+enabled = true
+allow_mock = false
