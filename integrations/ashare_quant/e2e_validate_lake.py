@@ -46,9 +46,11 @@ def validate_lake(data_root, expected_symbols, *, require_real=True):
             or bars.duplicated(["symbol", "trade_date"]).any()):
         result["errors"].append("DUPLICATE_OR_BAD_DATES")
     # False/unknown calendar rows are not admissible as trading sessions.
-    cal_flags = calendar.is_trading.map(lambda x: x if isinstance(x, bool) else
-                                        bool(x) if isinstance(x, int) and x in (0, 1)
-                                        else None)
+    def parse_flag(x):
+        if hasattr(x, "item") and not isinstance(x, str):
+            x = x.item()
+        return x if isinstance(x, bool) else None
+    cal_flags = calendar.is_trading.map(parse_flag)
     if cal_flags.isna().any():
         result["errors"].append("UNKNOWN_CALENDAR_FLAG")
     else:
