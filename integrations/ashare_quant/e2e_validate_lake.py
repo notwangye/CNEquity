@@ -88,8 +88,10 @@ def validate_lake(data_root, expected_symbols, *, require_real=True, target_date
     if not bars.data_version.astype(str).eq("v2").all():
         result["errors"].append("UNVERIFIED_VOLUME_UNIT")
     sources = sorted(bars.source.dropna().astype(str).unique().tolist())
+    # This narrow demo is explicitly TDX-only, not a general provider
+    # certification. Accept no unexpected or user-labelled fake sources.
     if (bars.source.isna().any() or not sources
-            or any(not x.strip() or x.lower() in {"mock", "baostock"} for x in sources)):
+            or any(x != "tdx_protocol" for x in sources)):
         result["errors"].append("BANNED_OR_MISSING_SOURCE")
     if require_real and not sources:
         result["errors"].append("NO_REAL_SOURCE")
