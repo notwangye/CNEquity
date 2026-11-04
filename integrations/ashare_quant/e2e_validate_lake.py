@@ -15,8 +15,9 @@ import pandas as pd
 from cnequity.query import load
 
 
-def validate_lake(data_root, expected_symbols, *, require_real=True):
+def validate_lake(data_root, expected_symbols, *, require_real=True, target_date=None):
     result = {"status": "FAIL", "data_root": str(data_root),
+              "target_date": target_date,
               "requested_symbols": expected_symbols, "bars": {}, "coverage": {},
               "errors": [], "historical_universe_approved": False,
               "strategy_approved": False, "provider_live_bars_verified": False}
@@ -82,6 +83,8 @@ def validate_lake(data_root, expected_symbols, *, require_real=True):
         frame = bars.loc[bars.symbol.eq(symbol)].sort_values("trade_date")
         if frame.empty:
             result["errors"].append("MISSING_EXPECTED_SYMBOL:" + symbol)
+        elif target_date is not None and str(frame.trade_date.iloc[-1])[:10] != target_date:
+            result["errors"].append("MISSING_TARGET_DATE:" + symbol)
         result["coverage"][symbol] = {
             "bars": len(frame),
             "first": str(frame.trade_date.iloc[0])[:10] if not frame.empty else None,
@@ -120,9 +123,11 @@ def main():
     parser.add_argument("--data-root", required=True)
     parser.add_argument("--expected-symbols", default="600519.SH,000001.SZ")
     parser.add_argument("--output", required=True)
+    parser.add_argument("--target-date", help="Require a bar on this YYYY-MM-DD date for each expected symbol")
     args = parser.parse_args()
     report = validate_lake(args.data_root,
-                           [x.strip() for x in args.expected_symbols.split(",")])
+                           [x.strip() for x in args.expected_symbols.split(",")],
+                           target_date=args.target_date)
     dest = Path(args.output)
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(json.dumps(report, indent=2, ensure_ascii=False, default=str))
